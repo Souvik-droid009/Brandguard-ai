@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { PDFDocument } from "pdf-lib";
 import {
   ShieldCheck,
@@ -27,6 +27,7 @@ import { AuditResults, ReviewResult, Issue } from "./components/AuditResults";
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 const MAX_PDF_SIZE = 10 * 1024 * 1024;
 const MAX_PDF_PAGES = 20;
+const PENDING_DRAFT_KEY = "brandguard_pending_draft";
 
 const DEFAULT_GUIDELINES = `1. TONE & VOICE: Professional, trustworthy, empathetic, and clear. Never use aggressive hype, slang, or fear-mongering.
 2. TERMINOLOGY: Always refer to our product as "BRAND GUARD Governance Suite" (never "the bot" or "auto-tool"). Use "customers" instead of "users".
@@ -98,6 +99,25 @@ const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
     "Outdated Info": 2,
   });
   const [unclearGuidelineCount, setUnclearGuidelineCount] = useState<number>(2);
+
+  // Restore a draft that was saved just before a creator was sent to sign in,
+  // so signing in never costs them their analysis.
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(PENDING_DRAFT_KEY);
+      if (!saved) return;
+      sessionStorage.removeItem(PENDING_DRAFT_KEY);
+      const draft = JSON.parse(saved);
+      if (draft?.result) {
+        setDraftTitle(draft.title || "Untitled Content Draft");
+        setContent(draft.content || "");
+        setResult(draft.result);
+        setActiveTab("analysis");
+      }
+    } catch {
+      // Ignore unreadable or unavailable storage; the creator can re-run the check.
+    }
+  }, []);
 
   const handleImageUpload = (
   e: React.ChangeEvent<HTMLInputElement>
@@ -277,7 +297,18 @@ const handlePdfUpload = async (
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
-      window.location.href = "/dashboard/approvals";
+      // Creators only need a normal sign-in. Keep their draft and bring them
+      // back here afterwards instead of dropping them into manager verification.
+      try {
+        sessionStorage.setItem(
+          PENDING_DRAFT_KEY,
+          JSON.stringify({ title: draftTitle, content, result })
+        );
+      } catch {
+        // Storage unavailable: they will just need to re-run the check.
+      }
+      document.cookie = "bg_next=/; path=/; max-age=600; SameSite=Lax";
+      window.location.href = "/login";
       return;
     }
 
@@ -298,8 +329,7 @@ const handlePdfUpload = async (
     }
 
     setSubmittedNotice(true);
-    window.location.href = "/dashboard/approvals";
- 
+    window.location.href = "/dashboard/approvals?view=creator";
   };
 
   const handleDecision = (id: string, decision: "Approved" | "Changes Requested") => {
@@ -347,7 +377,7 @@ const handlePdfUpload = async (
               <BookOpen className="w-4 h-4" /> Guidelines
             </button>
             <button
-  onClick={() => router.push("/login")}
+  onClick={() => router.push("/dashboard/approvals")}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-medium ${
                 activeTab === "workflow" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
               }`}
@@ -740,7 +770,7 @@ const handlePdfUpload = async (
     onReplaceDraft={() => setContent(result.revisedContent)}
     onSubmitApproval={handleSubmitForApproval}
     submittedNotice={submittedNotice}
-   onGoToWorkflow={() => window.location.href = "/dashboard/approvals"}
+   onGoToWorkflow={() => window.location.href = "/dashboard/approvals?view=creator"}
   />
 ) : ( 
       <div className="bg-[#0E1526] border border-slate-800 rounded-2xl p-8 text-center">
